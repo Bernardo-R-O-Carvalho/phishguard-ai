@@ -2,7 +2,7 @@
 
 A phishing email detector built with NLP, Machine Learning, and rule-based analysis, trained on 27,859 real emails.
 
-🚀 [Live Demo on Hugging Face Spaces] - (huggingface.co/spaces/BernardoCarvalho/pishguard-ai)
+🚀 [Live Demo on Hugging Face Spaces] - {{huggingface.co/spaces/BernardoCarvalho/pishguard-ai}
 
 ---
 
