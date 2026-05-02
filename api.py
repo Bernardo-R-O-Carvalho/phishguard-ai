@@ -1,11 +1,16 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-import joblib
+import torch
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from url_features import analyze_email_urls
 from sender_features import analyze_sender
+from time_features import analyze_time
 
-model = joblib.load("model.pkl")
-tfidf = joblib.load("tfidf.pkl")
+import os
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "phishguard-bert-final")
+tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH)
+bert_model = AutoModelForSequenceClassification.from_pretrained(MODEL_PATH)
+bert_model.eval()
 
 app = FastAPI(title="PhishGuard AI API")
 
@@ -18,26 +23,33 @@ WORDCLOUD_WORDS = [
     "internet", "website", "address", "save", "info", "receive"
 ]
 
+def get_model_confidence(text):
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, max_length=256, padding=True)
+    with torch.no_grad():
+        outputs = bert_model(**inputs)
+    probs = torch.softmax(outputs.logits, dim=1)
+    return int(probs[0][1].item() * 100)
+
 class EmailRequest(BaseModel):
     sender: str = ""
     subject: str = ""
     body: str = ""
+    received_at: str = ""
 
 @app.post("/analyze")
 def analyze(email: EmailRequest):
     text = email.subject + " " + email.body
 
-    pred = model.predict(tfidf.transform([text]))[0]
-    prob = model.predict_proba(tfidf.transform([text]))[0]
-    model_confidence = int(prob[1] * 100)
+    model_confidence = get_model_confidence(text)
 
     flags = [w for w in RISK_WORDS if w in text.lower()]
     url_results = analyze_email_urls(text)
     sender_flags = analyze_sender(email.sender)
     wc_hits = [w for w in WORDCLOUD_WORDS if w in text.lower()]
+    time_result = analyze_time(email.received_at)
 
     text_score = min(50 if len(flags) >= 3 else 25 if len(flags) >= 1 else 0 + len(flags) * 5, 50)
-    
+
     url_score = 0
     for r in url_results:
         if "trusted domain" in r["flags"]:
@@ -61,13 +73,15 @@ def analyze(email: EmailRequest):
     sndr_score = min(sndr_score, 50)
 
     wc_score = min(len(wc_hits) * 3, 15)
+    time_score = time_result["score"]
 
     total_score = min(
         int(model_confidence * 0.4) +
-        int((text_score * 2) * 0.25) +
+        int((text_score * 2) * 0.2) +
         int((url_score * 2) * 0.2) +
-        int((sndr_score * 2) * 0.15) +
-        wc_score,
+        int((sndr_score * 2) * 0.1) +
+        wc_score +
+        time_score,
         100
     )
 
@@ -85,9 +99,12 @@ def analyze(email: EmailRequest):
         "text_score": text_score,
         "url_score": url_score,
         "sender_score": sndr_score,
+        "time_score": time_score,
         "suspicious_words": flags,
         "pattern_words": wc_hits,
         "sender_flags": sender_flags,
+        "time_flags": time_result["flags"],
+        "received_parsed": time_result["parsed"],
         "url_flags": [f"{r['domain']}: {f}" for r in url_results for f in r["flags"] if f != "trusted domain"]
     }
 

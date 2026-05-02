@@ -1,2 +1,10 @@
-gradio
+gradio==6.14.0
 scikit-learn
+joblib
+pandas
+wordcloud
+matplotlib
+fastapi
+uvicorn
+transformers
+torch
